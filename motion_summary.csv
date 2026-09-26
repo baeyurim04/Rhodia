@@ -1,0 +1,2 @@
+Number_clusters,Number_with_ages,Number_with_velocities,R0_kpc,Adopted_V0_km_s,Fitted_rotation_km_s,Formal_rotation_error_km_s,Residual_std_km_s,Outlier_sigma_limit,Residual_threshold_km_s,Number_motion_outliers,Number_beyond_3sigma
+157,64,143,8.0,220.0,73.76103718268486,18.597741888718957,123.77222058351008,2.0,247.54444116702015,6,0

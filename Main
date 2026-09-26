@@ -1,67 +1,52 @@
+
+from matplotlib.path import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
-import math
-import matplotlib.colors as clrs
 
-#Classification Method 1: Marcus
+# ==== Read CSV Files and Define Variables ==== #
 
-#reading the csv files
-krause = pd.read_csv('Krause21_fixed.csv')
-vandenBerg = pd.read_csv('vandenBerg_table2_fixed.csv')
+# The age and metallicity data are already included in the merged tables #
 harris_p1 = pd.read_csv('HarrisPartI.csv')
 harris_p3 = pd.read_csv('HarrisPartIII.csv')
-totmerge = pd.read_csv('totmerge.csv')
-totmerge2 = pd.read_csv('totmerge2.csv')
+krause = pd.read_csv('Krause21_fixed.csv')
+vandenberg = pd.read_csv('vandenBerg_table2_fixed.csv')
 
-#defining parameters for analysis
+for table in [harris_p1, harris_p3, krause, vandenberg]:
+    table['ID'] = table['ID'].str.strip()
 
-x_1 = totmerge['X']
-y_1 = totmerge['Y']
-z_1 = totmerge['Z']
-ID_1 = totmerge['ID']
-x_2 = totmerge2['X']
-y_2 = totmerge2['Y']
-z_2 = totmerge2['Z']
-r_c = totmerge2['r_c']
-sig_v = totmerge2['sig_v']
-Age_x = totmerge2['Age_x']
-FeH_x = totmerge2['FeH_x']
-FeH_y = totmerge2['FeH_y']
-Age_y = totmerge2['Age_y']
-ID_h = totmerge2['ID']
-ID_2 = totmerge2['ID']
+krause.loc[krause['ID'] == 'Ruprecht 106', 'ID'] = 'Rup 106'
+vandenberg.loc[vandenberg['ID'] == 'NGC XXXX', 'ID'] = 'Arp 2'
 
-Z = harris_p1['Z']
-X = harris_p1['X']
-Y = harris_p1['Y']
-R_gc = harris_p1['R_gc']
-ID = harris_p1['ID']
+for table in [harris_p3, krause, vandenberg]:
+    if not table['ID'].isin(harris_p1['ID']).all():
+        raise ValueError('Some cluster names do not match the Harris Table')
+    
+# Correcting Coordinates and Merging Tables #
 
-r_c_h = harris_p3['r_c']
-v_r = harris_p3['v_r']
+R0 = 8.0
+V0 = 220.0  # Adopted solar circular speed in km/s; used in the motion section. #
+harris_p1['X_gc'] = harris_p1['X'] - R0
+harris_p1['Y_gc'] = harris_p1['Y']
+harris_p1['Z_gc'] = harris_p1['Z']
+harris_p1['R_projected'] = np.sqrt(harris_p1['X_gc']**2 + harris_p1['Y_gc']**2)
+harris_p1['R_gc_3d_calculated'] = np.sqrt(harris_p1['R_projected']**2 + harris_p1['Z_gc']**2)
 
-# Dynamically plotting X vs Y positions and Galactocentric radius vs |Z|
-# Definining the geleacocentric radius for the harris data and finding its sigma values
+# Name the Krause columns
+krause = krause.rename(columns={
+    'Age': 'Age_x',
+    'FeH': 'FeH_x'
+})
 
-R = np.sqrt(X**2+Y**2)
-R_std = np.std(R)
+# Name the VandenBerg columns
+vandenberg = vandenberg.rename(columns={
+    'Age': 'Age_y',
+    'FeH': 'FeH_y'
+})
 
-# Definining conditions on R  vs |Z| plot to colour code by no. of sigmas
-conditions = (R>3*R_std, (R>R_std) & (R<3*R_std), R<R_std)
-cond_colours = ('blue','red', 'green')
-point_colours = np.select(conditions, cond_colours, default = 'red')
+# Match rows by ID.
+totmerge = harris_p1.merge(harris_p3, on='ID', how='left', validate = 'one_to_one')
+totmerge = totmerge.merge(krause, on='ID', how='left', validate = 'one_to_one')
+totmerge = totmerge.merge(vandenberg, on='ID', how='left', validate = 'one_to_one')
+R_std = np.std(totmerge['R_projected'])
 
-#Plotting R vs |Z|
-plt.figure(1)
-plt.scatter(R,abs(Z), c=point_colours, alpha = 0.4)
-plt.xlabel(r"Galactocentric Radius ($R = \sqrt{X^{2}+Y^{2}}$) (kpc)")
-plt.ylabel("Height from Plane (kpc)")
-plt.title("Galactocentric Radius vs Height over Galactic Plane")
-plt.plot([10,10], [0,110], linestyle="--", color = "r", label = "10kpc certainty range")
-plt.ylim(top = 110, bottom = 0.1)
-plt.xlim(left = 0.1, right = 100)
-plt.text(25,70, 'No. of possibly accreted clusters = 61')
-plt.legend()
-plt.grid(True)
-plt.show()
