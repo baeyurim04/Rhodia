@@ -1,34 +1,70 @@
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+import math
+import matplotlib.colors as clrs
 
-# Reading the CSV file
+# Classification Method 1: Marcus
+
+# Reading the CSV files
+krause = pd.read_csv("Krause21_fixed.csv")
+vandenBerg = pd.read_csv("vandenBerg_table2_fixed.csv")
 harris_p1 = pd.read_csv("HarrisPartI.csv")
+harris_p3 = pd.read_csv("HarrisPartIII.csv")
+totmerge = pd.read_csv("totmerge.csv")
+totmerge2 = pd.read_csv("totmerge2.csv")
 
-# Defining parameters
-ID = harris_p1["ID"]
-Name = harris_p1["Name"]
+# Parameters from totmerge.csv
+x_1 = totmerge["X"]
+y_1 = totmerge["Y"]
+z_1 = totmerge["Z"]
+ID_1 = totmerge["ID"]
 
-RA = harris_p1["RA"]
-DEC = harris_p1["DEC"]
+# Parameters from totmerge2.csv
+x_2 = totmerge2["X"]
+y_2 = totmerge2["Y"]
+z_2 = totmerge2["Z"]
 
-L = harris_p1["L"]
-B = harris_p1["B"]
+r_c = totmerge2["r_c"]
+sig_v = totmerge2["sig_v"]
 
-R_Sun = harris_p1["R_Sun"]
-R_gc = harris_p1["R_gc"]
+Age_x = totmerge2["Age_x"]
+FeH_x = totmerge2["FeH_x"]
+FeH_y = totmerge2["FeH_y"]
+Age_y = totmerge2["Age_y"]
 
+ID_h = totmerge2["ID"]
+ID_2 = totmerge2["ID"]
+
+# Parameters from HarrisPartI.csv
+Z = harris_p1["Z"]
 X = harris_p1["X"]
 Y = harris_p1["Y"]
-Z = harris_p1["Z"]
+R_gc = harris_p1["R_gc"]
+ID = harris_p1["ID"]
 
-# Calculating projected distance from the Galactic plane axes
+# Parameters from HarrisPartIII.csv
+r_c_h = harris_p3["r_c"]
+v_r = harris_p3["v_r"]
+
+# Calculating the projected radius
 R = np.sqrt(X**2 + Y**2)
 
-# Height above/below the Galactic plane
-abs_Z = np.abs(Z)
+# Calculating standard deviation
+R_std = np.std(R)
 
-# Checking the data
-print(harris_p1.head())
-print(harris_p1.info())
+# Defining the classification conditions
+conditions = (
+    R > 3 * R_std,
+    (R > R_std) & (R <= 3 * R_std),
+    R <= R_std
+)
+
+cond_colours = ("blue", "green", "red")
+
+point_colours = np.select(
+    conditions,
+    cond_colours,
+    default="green"
+)
