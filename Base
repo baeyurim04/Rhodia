@@ -1,1 +1,69 @@
-import matplot.library as plt
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
+import math
+import matplotlib.colors as clrs
+
+#Classification Method 1: Marcus
+
+#reading the csv files
+krause = pd.read_csv('Krause21_fixed.csv')
+vandenBerg = pd.read_csv('vandenBerg_table2_fixed.csv')
+harris_p1 = pd.read_csv('HarrisPartI.csv')
+harris_p3 = pd.read_csv('HarrisPartIII.csv')
+totmerge = pd.read_csv('totmerge.csv')
+totmerge2 = pd.read_csv('totmerge2.csv')
+
+#defining parameters for analysis
+
+x_1 = totmerge['X']
+y_1 = totmerge['Y']
+z_1 = totmerge['Z']
+ID_1 = totmerge['ID']
+x_2 = totmerge2['X']
+y_2 = totmerge2['Y']
+z_2 = totmerge2['Z']
+r_c = totmerge2['r_c']
+sig_v = totmerge2['sig_v']
+Age_x = totmerge2['Age_x']
+FeH_x = totmerge2['FeH_x']
+FeH_y = totmerge2['FeH_y']
+Age_y = totmerge2['Age_y']
+ID_h = totmerge2['ID']
+ID_2 = totmerge2['ID']
+
+Z = harris_p1['Z']
+X = harris_p1['X']
+Y = harris_p1['Y']
+R_gc = harris_p1['R_gc']
+ID = harris_p1['ID']
+
+r_c_h = harris_p3['r_c']
+v_r = harris_p3['v_r']
+
+# Dynamically plotting X vs Y positions and Galactocentric radius vs |Z|
+# Definining the geleacocentric radius for the harris data and finding its sigma values
+
+R = np.sqrt(X**2+Y**2)
+R_std = np.std(R)
+
+# Definining conditions on R  vs |Z| plot to colour code by no. of sigmas
+conditions = (R>3*R_std, (R>R_std) & (R<3*R_std), R<R_std)
+cond_colours = ('blue','green', 'red')
+point_colours = np.select(conditions, cond_colours, default = 'green')
+
+#Plotting R vs |Z|
+plt.figure(1)
+plt.scatter(R,abs(Z), c=point_colours, alpha = 0.4)
+plt.xlabel(r"Galactocentric Radius ($R = \sqrt{X^{2}+Y^{2}}$) (kpc)")
+plt.ylabel("Height from Plane (kpc)")
+plt.title("Galactocentric Radius vs Height over Galactic Plane")
+plt.plot([10,10], [0,110], linestyle="--", color = "r", label = "10kpc certainty range")
+plt.ylim(top = 110, bottom = 0.1)
+plt.xlim(left = 0.1, right = 100)
+plt.text(25,70, 'No. of possibly accreted clusters = 61')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.savefig("cluster_plot.png", dpi=300, bbox_inches="tight")
+plt.close()
