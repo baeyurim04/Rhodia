@@ -1,69 +1,243 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
-import math
-import matplotlib.colors as clrs
 
-#Classification Method 1: Marcus
 
-#reading the csv files
-krause = pd.read_csv('Krause21_fixed.csv')
-vandenBerg = pd.read_csv('vandenBerg_table2_fixed.csv')
+# ==== Read CSV Files and Define Variables ==== #
+
+# The age and metallicity data are already included in the merged tables #
 harris_p1 = pd.read_csv('HarrisPartI.csv')
 harris_p3 = pd.read_csv('HarrisPartIII.csv')
-totmerge = pd.read_csv('totmerge.csv')
-totmerge2 = pd.read_csv('totmerge2.csv')
+krause = pd.read_csv('Krause21_fixed.csv')
+vandenberg = pd.read_csv('vandenBerg_table2_fixed.csv')
 
-#defining parameters for analysis
+# Make the cluster names consistent before merging
+krause['ID'] = krause['ID'].replace({
+    'Ruprecht 106': 'Rup 106'
+})
 
-x_1 = totmerge['X']
-y_1 = totmerge['Y']
-z_1 = totmerge['Z']
-ID_1 = totmerge['ID']
-x_2 = totmerge2['X']
-y_2 = totmerge2['Y']
-z_2 = totmerge2['Z']
-r_c = totmerge2['r_c']
-sig_v = totmerge2['sig_v']
-Age_x = totmerge2['Age_x']
-FeH_x = totmerge2['FeH_x']
-FeH_y = totmerge2['FeH_y']
-Age_y = totmerge2['Age_y']
-ID_h = totmerge2['ID']
-ID_2 = totmerge2['ID']
+vandenberg['ID'] = vandenberg['ID'].replace({
+    'NGC XXXX': 'Arp 2'
+})
 
-Z = harris_p1['Z']
+# Combine records using the cluster ID
+totmerge = harris_p1.merge(
+    harris_p3, on='ID', how='left', validate='one_to_one'
+)
+
+totmerge = totmerge.merge(
+    krause, on='ID', how='left', validate='one_to_one'
+)
+
+totmerge = totmerge.merge(
+    vandenberg, on='ID', how='left', validate='one_to_one'
+)
+
+# Keep clusters with an age from either source
+totmerge2 = totmerge[
+    totmerge['Age_x'].notna() | totmerge['Age_y'].notna()
+].copy()
+
+# Harris positions #
 X = harris_p1['X']
 Y = harris_p1['Y']
-R_gc = harris_p1['R_gc']
-ID = harris_p1['ID']
+Z = harris_p1['Z']
 
-r_c_h = harris_p3['r_c']
-v_r = harris_p3['v_r']
+# Positions for the full merged dataset #
+x_1 = totmerge['X']
+y_1 = totmerge['Y']
 
-# Dynamically plotting X vs Y positions and Galactocentric radius vs |Z|
-# Definining the geleacocentric radius for the harris data and finding its sigma values
+# Positions, ages and metallicities for the age plots #
+x_2 = totmerge2['X']
+y_2 = totmerge2['Y']
+ID_h = totmerge2['ID']
+FeH_x = totmerge2['FeH_x']
+Age_x = totmerge2['Age_x']
+FeH_y = totmerge2['FeH_y']
+Age_y = totmerge2['Age_y']
 
-R = np.sqrt(X**2+Y**2)
+# Calculate the radius for each dataset #
+R = np.sqrt((X - 8.0)**2 + Y**2)
+R_all = np.sqrt((x_1 - 8.0)**2 + y_1**2)
+R_age = np.sqrt((x_2 - 8.0)**2 + y_2**2)
+
 R_std = np.std(R)
+R_all_std = np.std(R_all)
 
-# Definining conditions on R  vs |Z| plot to colour code by no. of sigmas
-conditions = (R>3*R_std, (R>R_std) & (R<3*R_std), R<R_std)
-cond_colours = ('blue','green', 'red')
-point_colours = np.select(conditions, cond_colours, default = 'green')
+# ==== Dynamical Plots of X vs Y Positions and Radius vs |Z| ==== #
 
-#Plotting R vs |Z|
+# Group the radii for colour coding #
+small_radius = R < R_std
+middle_radius = (R >= R_std) & (R <= 3 * R_std)
+large_radius = R > 3 * R_std
+
+# Count clusters outside the 10 kpc boundary #
+outside = R > 10
+inside = R <= 10
+number_outside = outside.sum()
+
+# Plot of Radius vs |Z| #
 plt.figure(1)
-plt.scatter(R,abs(Z), c=point_colours, alpha = 0.4)
-plt.xlabel(r"Galactocentric Radius ($R = \sqrt{X^{2}+Y^{2}}$) (kpc)")
-plt.ylabel("Height from Plane (kpc)")
-plt.title("Galactocentric Radius vs Height over Galactic Plane")
-plt.plot([10,10], [0,110], linestyle="--", color = "r", label = "10kpc certainty range")
-plt.ylim(top = 110, bottom = 0.1)
-plt.xlim(left = 0.1, right = 100)
-plt.text(25,70, 'No. of possibly accreted clusters = 61')
-plt.legend()
-plt.grid(True)
+plt.clf()
+plt.scatter(R[small_radius], abs(Z[small_radius]), color='red', alpha=0.7,
+            label='R < standard deviation')
+plt.scatter(R[middle_radius], abs(Z[middle_radius]), color='green', alpha=0.7,
+            label='R between 1 and 3 standard deviations')
+plt.scatter(R[large_radius], abs(Z[large_radius]), color='blue', alpha=0.7,
+            label='R > 3 x standard deviation')
+plt.axvline(10, linestyle='--', color='red', label='10 kpc boundary')
+plt.xlabel('Projected radius from input origin (kpc)')
+plt.ylabel('Height from plane |Z| (kpc)')
+plt.title(f'Radius vs Height above Galactic Plane\nFull sample outside 10 kpc: {number_outside}')
+plt.xlim(0.1, 100)
+plt.ylim(0.1, 110)
+plt.legend(fontsize=8)
+plt.grid(True, alpha=0.6)
 plt.tight_layout()
-plt.savefig("cluster_plot.png", dpi=300, bbox_inches="tight")
-plt.close()
+
+# Calculate the points needed to draw the 10 kpc circle #
+theta = np.linspace(0, 2 * np.pi, 500)
+circle_x = 8.0 + 10 * np.cos(theta)
+circle_y = 10 * np.sin(theta)
+
+# Label and count the selected Krause21 clusters #
+number_krause = 0
+
+for i in range(len(totmerge2)):
+    if R_age.iloc[i] > 9.8 and FeH_x.iloc[i] > -1.75 and pd.notna(Age_x.iloc[i]):
+        plt.annotate(
+            ID_h.iloc[i],
+            (FeH_x.iloc[i], Age_x.iloc[i]),
+            fontsize=8
+        )
+
+        number_krause += 1
+
+plt.title(
+    f'Age vs Metallicity: Krause21\n'
+    f'Selected for labelling in full sample: {number_krause}'
+)
+
+# X vs Y position plot #
+plt.figure(2)
+plt.clf()
+plt.scatter(X[outside], Y[outside], color='blue', alpha=0.7, label='R > 10 kpc')
+plt.scatter(X[inside], Y[inside], color='red', alpha=0.7, label='R <= 10 kpc')
+plt.plot(circle_x, circle_y, '--', color='red', label='10 kpc boundary')
+plt.axis('equal')
+plt.xlabel('Input X coordinate (kpc)')
+plt.ylabel('Input Y coordinate (kpc)')
+plt.title(f'Harris Cluster Positions\nFull sample outside 10 kpc: {number_outside}')
+plt.legend(fontsize=8)
+plt.grid(True, alpha=0.6)
+plt.title(f'Age vs Metallicity: Krause21\nSelected for labelling in full sample: {number_krause}')
+plt.xlim(-15, 15)
+plt.ylim(-15, 15)
+plt.legend(fontsize=8)
+plt.grid(True, alpha=0.6)
+plt.tight_layout()
+
+
+# ==== Age vs Metallicity Plots ==== #
+
+# Select which clusters belong to each colour group #
+outside_age = R_age > 9.8       # Blue points
+inside_age = R_age <= 9.8       # Red points
+missing_radius = R_age.isna()  # Grey points
+
+# Age vs Metallicity plot using VandenBerg data #
+plt.figure(3)
+plt.clf()
+plt.scatter(FeH_y[outside_age], Age_y[outside_age], color='blue', alpha=0.7,
+            label='R > 9.8 kpc')
+plt.scatter(FeH_y[inside_age], Age_y[inside_age], color='red', alpha=0.7,
+            label='R <= 9.8 kpc')
+plt.scatter(FeH_y[missing_radius], Age_y[missing_radius], color='gray', alpha=0.7,
+            label='Missing radius')
+
+# Label and count clusters outside 9.8 kpc with both age and metallicity data #
+number_vandenberg = 0
+
+for i in range(len(totmerge2)):
+    if R_age.iloc[i] > 9.8 and pd.notna(FeH_y.iloc[i]) and pd.notna(Age_y.iloc[i]):
+        plt.annotate(ID_h.iloc[i], (FeH_y.iloc[i], Age_y.iloc[i]), fontsize=8)
+        number_vandenberg += 1
+
+plt.xlabel('[Fe/H]')
+plt.ylabel('Age (Gyr)')
+plt.title(f'Age vs Metallicity: VandenBerg\nSpatial candidates with age and [Fe/H]: {number_vandenberg}')
+plt.legend(fontsize=8)
+plt.xlim(-3,0)
+plt.ylim(8,14)
+plt.grid(True, alpha=0.6)
+plt.tight_layout()
+
+
+# ==== Final X vs Y Position Plot with Screening Colour Coding ==== #
+
+# Use metallicities from totmerge so they match the positions being plotted #
+metal_rich = (totmerge['FeH_x'] >= -1.75) | (totmerge['FeH_y'] >= -1.75)
+selected = ((R_all > 10) & metal_rich) | (R_all > 3 * R_all_std)
+other_outside = (R_all > 10) & ~selected
+other_inside = (R_all <= 10) & ~selected
+number_selected = selected.sum()
+
+plt.figure(4)
+plt.clf()
+plt.scatter(x_1[selected], y_1[selected], color='blue', alpha=0.7,
+            label='Selected by radius and metallicity rule')
+plt.scatter(x_1[other_outside], y_1[other_outside], color='green', alpha=0.7,
+            label='Other clusters with R > 10 kpc')
+plt.scatter(x_1[other_inside], y_1[other_inside], color='red', alpha=0.7,
+            label='Other clusters with R <= 10 kpc')
+plt.plot(circle_x, circle_y, '--', color='red', label='10 kpc boundary')
+plt.axis('equal')
+plt.xlabel('Input X coordinate (kpc)')
+plt.ylabel('Input Y coordinate (kpc)')
+plt.title(f'Spatial and Metallicity Screening\nSelected candidates: {number_selected}')
+plt.legend(fontsize=8)
+plt.grid(True, alpha=0.6)
+plt.tight_layout()
+
+
+# ==== Classification of In-situ, Accreted or Unsure Clusters ==== #
+
+# Keep the original classification rules and their order #
+# These are candidate classifications, rather than confirmed cluster origins.
+def classify2(FeH_x, Age_x, FeH_y, radius):
+    if ((FeH_x >= -1.75 or FeH_y >= -1.75) and radius > 9.8) or radius > 3 * R_all_std:
+        return 'Accreted'
+    elif (
+        radius > 9.8
+        or (FeH_x <= -1.75 and Age_x >= 12.5)
+        or (FeH_x >= -1.75 and Age_x < 12.5)
+    ):
+        return 'Unsure'
+    elif radius <= 9.8:
+        return 'In-situ'
+    else:
+        return 'Unsure'
+
+
+# Classify one row at a time and store the results in a list #
+results = []
+
+for i in range(len(totmerge)):
+    row = totmerge.iloc[i]
+    result = classify2(row['FeH_x'], row['Age_x'], row['FeH_y'], R_all.iloc[i])
+    results.append(result)
+
+# Add the completed list to the dataframe
+totmerge['Classification'] = results
+
+# Make a smaller table containing only ID and Classification #
+classification = totmerge[['ID', 'Classification']].copy()
+print(classification)
+
+# Show all four plots #
+# Save each plot as an image #
+
+for number in plt.get_fignums():
+    plt.figure(number)
+    plt.savefig(f'plot_{number}.png', dpi=200, bbox_inches='tight')
+plt.show()
