@@ -1,0 +1,116 @@
+from pathlib import Path
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Put this script in the same folder as the project CSV files.
+DATA = Path('.')
+OUT = DATA / 'figures'
+OUT.mkdir(exist_ok=True)
+
+def load(name):
+    p = DATA / name
+    if not p.exists():
+        print(f'Missing optional file: {name}')
+        return None
+    df = pd.read_csv(p, na_values=['NA', 'NaN', ''])
+    df.columns = [str(c).strip().replace('\ufeff', '') for c in df.columns]
+    return df
+
+def num(df, col):
+    return pd.to_numeric(df[col], errors='coerce')
+
+merged = load('totmerge2.csv')
+harris1 = load('HarrisPartI.csv')
+harris3 = load('HarrisPartIII.csv')
+totmerge = load('totmerge.csv')
+# Load source files too; inspect their columns/source mapping before interpretation.
+krause = load('Krause21_fixed.csv')
+vandenberg = load('vandenBerg_table2_fixed.csv')
+
+# GRAPH 1 — 50% effort: Age vs metallicity.
+# Keep source pairs separate and verify their source mapping and units first.
+if merged is not None:
+    plt.figure(figsize=(9, 6))
+    plotted = 0
+    for age_col, feh_col, label in [
+        ('Age_x', 'FeH_x', 'Age_x / FeH_x'),
+        ('Age_y', 'FeH_y', 'Age_y / FeH_y'),
+    ]:
+        if age_col in merged.columns and feh_col in merged.columns:
+            age, feh = num(merged, age_col), num(merged, feh_col)
+            ok = age.notna() & feh.notna()
+            if ok.any():
+                plt.scatter(feh[ok], age[ok], s=35, alpha=.8,
+                            edgecolors='black', linewidths=.25, label=label)
+                plotted += int(ok.sum())
+    if plotted:
+        plt.xlabel('Metallicity [Fe/H] (dex)')
+        plt.ylabel('Age (verify units in source)')
+        plt.title('Globular-cluster age–metallicity relation')
+        plt.grid(alpha=.25)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(OUT / '01_age_metallicity.png', dpi=300)
+    else:
+        print('Graph 1 not made: no usable Age_x/FeH_x or Age_y/FeH_y pairs found.')
+    plt.close()
+
+# GRAPH 2 — 30% effort: Spatial distribution.
+# Verify coordinate conventions before interpreting R_gc against |Z|.
+spatial = merged if merged is not None else (totmerge if totmerge is not None else harris1)
+if spatial is not None and {'R_gc', 'Z'}.issubset(spatial.columns):
+    rgc, zabs = num(spatial, 'R_gc'), num(spatial, 'Z').abs()
+    ok = rgc.notna() & zabs.notna()
+    plt.figure(figsize=(9, 6))
+    plt.scatter(rgc[ok], zabs[ok], s=35, alpha=.8,
+                edgecolors='black', linewidths=.25)
+    plt.xlabel('Galactocentric distance R_gc (kpc)')
+    plt.ylabel('|Z| from supplied catalogue (kpc; verify coordinates)')
+    plt.title('Spatial distribution of globular clusters')
+    plt.grid(alpha=.25)
+    plt.tight_layout()
+    plt.savefig(OUT / '02_spatial_distribution.png', dpi=300)
+    plt.close()
+else:
+    print('Graph 2 not made: R_gc and Z columns are required.')
+
+# GRAPH 3 — 20% effort: line-of-sight kinematics vs Galactocentric distance.
+kin, vel = None, None
+if merged is not None and {'R_gc', 'v_LSR'}.issubset(merged.columns):
+    kin, vel = merged.copy(), 'v_LSR'
+elif merged is not None and {'R_gc', 'v_r'}.issubset(merged.columns):
+    kin, vel = merged.copy(), 'v_r'
+elif harris3 is not None:
+    position = merged if merged is not None else (totmerge if totmerge is not None else harris1)
+    if position is not None and {'ID', 'R_gc'}.issubset(position.columns) and 'ID' in harris3.columns:
+        vcol = next((c for c in ('v_LSR', 'v_r') if c in harris3.columns), None)
+        if vcol:
+            kin = position[['ID', 'R_gc']].merge(harris3[['ID', vcol]], on='ID', how='inner')
+            vel = vcol
+
+if kin is not None and vel:
+    x, y = num(kin, 'R_gc'), num(kin, vel)
+    ok = x.notna() & y.notna()
+    plt.figure(figsize=(9, 6))
+    plt.scatter(x[ok], y[ok], s=35, alpha=.8,
+                edgecolors='black', linewidths=.25)
+    plt.axhline(0, linestyle='--', linewidth=1)
+    plt.xlabel('Galactocentric distance R_gc (kpc)')
+    plt.ylabel('Velocity relative to LSR (km/s)' if vel == 'v_LSR' else 'Radial velocity v_r (km/s)')
+    plt.title('Line-of-sight kinematics of globular clusters')
+    plt.grid(alpha=.25)
+    plt.tight_layout()
+    plt.savefig(OUT / '03_kinematics.png', dpi=300)
+    plt.close()
+else:
+    print('Graph 3 not made: need R_gc matched with v_LSR or v_r by cluster ID.')
+
+(OUT / 'README_interpretation.txt').write_text(
+    'Graph 1: age–metallicity patterns may give clues to different formation histories. '
+    'Verify Age_x/FeH_x and Age_y/FeH_y source mapping and units.\\n'
+    'Graph 2: exploratory until the coordinate conventions for Z and R_gc are confirmed.\\n'
+    'Graph 3: v_LSR/v_r are line-of-sight velocities, not full 3D orbital velocities.\\n'
+    'No single graph proves accretion; combine evidence and discuss uncertainty.\\n',
+    encoding='utf-8'
+)
+print('Finished. Available figures are saved in ./figures/')

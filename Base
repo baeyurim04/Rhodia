@@ -1,1 +1,356 @@
-import matplot.library as plt
+
+from matplotlib.path import Path
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
+
+# ==== Read CSV Files and Define Variables ==== #
+
+# The age and metallicity data are already included in the merged tables #
+harris_p1 = pd.read_csv('HarrisPartI.csv')
+harris_p3 = pd.read_csv('HarrisPartIII.csv')
+krause = pd.read_csv('Krause21_fixed.csv')
+vandenberg = pd.read_csv('vandenBerg_table2_fixed.csv')
+
+for table in [harris_p1, harris_p3, krause, vandenberg]:
+    table['ID'] = table['ID'].str.strip()
+
+krause.loc[krause['ID'] == 'Ruprecht 106', 'ID'] = 'Rup 106'
+vandenberg.loc[vandenberg['ID'] == 'NGC XXXX', 'ID'] = 'Arp 2'
+
+for table in [harris_p3, krause, vandenberg]:
+    if not table['ID'].isin(harris_p1['ID']).all():
+        raise ValueError('Some cluster names do not match the Harris Table')
+    
+# Correcting Coordinates and Merging Tables #
+
+R0 = 8.0
+V0 = 220.0  # Adopted solar circular speed in km/s; used in the motion section. #
+harris_p1['X_gc'] = harris_p1['X'] - R0
+harris_p1['Y_gc'] = harris_p1['Y']
+harris_p1['Z_gc'] = harris_p1['Z']
+harris_p1['R_projected'] = np.sqrt(harris_p1['X_gc']**2 + harris_p1['Y_gc']**2)
+harris_p1['R_gc_3d_calculated'] = np.sqrt(harris_p1['R_projected']**2 + harris_p1['Z_gc']**2)
+
+# Name the Krause columns
+krause = krause.rename(columns={
+    'Age': 'Age_x',
+    'FeH': 'FeH_x'
+})
+
+# Name the VandenBerg columns
+vandenberg = vandenberg.rename(columns={
+    'Age': 'Age_y',
+    'FeH': 'FeH_y'
+})
+
+# Match rows by ID.
+totmerge = harris_p1.merge(harris_p3, on='ID', how='left', validate = 'one_to_one')
+totmerge = totmerge.merge(krause, on='ID', how='left', validate = 'one_to_one')
+totmerge = totmerge.merge(vandenberg, on='ID', how='left', validate = 'one_to_one')
+R_std = np.std(totmerge['R_projected'])
+
+# ++++ Classification of In-Situ, Accreted, or Unsure clusters ++++ #
+
+def classify(FeH_x, Age_x, FeH_y, radius):
+    if pd.isna(radius):
+        return'Unsure'
+    elif (radius > 9.8 and (FeH_x >= -1.75 or FeH_y >= -1.75)) or radius > 3 * R_std:
+        return 'Accreted'
+    elif pd.isna(FeH_x) or pd.isna(Age_x):
+        return 'Unsure'
+    elif(radius >9.8 or (FeH_x <= -1.75 and Age_x >= 12.5)
+         or (FeH_x >= -1.75 and Age_x < 12.5)):
+        return 'Unsure'
+    elif radius <= 9.8:
+        return 'In-Situ'
+    else:
+        return 'Unsure'
+
+results = []
+for i in range(len(totmerge)):
+    row = totmerge.iloc[i]
+    result = classify(row['FeH_x'], row['Age_x'], row['FeH_y'], row['R_projected'])
+    results.append(result)
+
+totmerge['Classification'] = results
+totmerge['Has_age_data'] = totmerge['Age_x'].notna() | totmerge['Age_y'].notna()
+
+# ==== Motion Analysis ===#
+
+valid_motion = (totmerge['v_LSR'].notna() & totmerge['L'].notna() & totmerge['B'].notna() & (totmerge['R_projected'] >0))
+motion = totmerge[valid_motion].copy()
+if len(motion) < 3:
+       raise ValueError('At least three clusters need valid motion data.')
+
+#convert longitude and latitude to radians
+longitude = np.deg2rad(motion['L'])
+latitude = np.deg2rad(motion['B'])
+
+# v_LSR already includes the correction for the suns mothin.
+#v_gsr adds the projected circular motion of the sun in km/s
+motion['v_GSR'] = motion['v_LSR'] + V0 * np.sin(longitude) * np.cos(latitude)
+q = R0 * np.sin(longitude) * np.cos(latitude) / motion['R_projected']
+rotation_speed = np.sum(q * motion['v_GSR']) / np.sum(q**2)
+
+# q gives the viewing direction factor, so the model velocity = mean velocity * 1
+motion['Rotation_projection'] = q
+motion['v_model'] = rotation_speed * q
+motion['v_residual'] = motion['v_GSR'] - motion['v_model']
+residual_std = np.std(motion['v_residual'], ddof=1)
+rotation_error = residual_std / np.sqrt(np.sum(q**2))
+motion_limit = 2 * residual_std
+
+# A large residual is an exploratory flag, not proof of accretion. #
+motion['Motion_outlier'] = abs(motion['v_residual']) > motion_limit
+motion['Motion_flag'] = 'Within residual threshold'
+motion.loc[motion['Motion_outlier'], 'Motion_flag'] = 'Large velocity residual'
+
+# Attach the results by ID, including the clusters without measured velocities. #
+motion_values = motion[['ID', 'Rotation_projection', 'v_GSR', 'v_model', 'v_residual', 'Motion_flag']]
+totmerge = totmerge.merge(motion_values, on='ID', how='left', validate='one_to_one')
+totmerge['Motion_flag'] = totmerge['Motion_flag'].fillna('Missing motion inputs')
+totmerge2 = totmerge[totmerge['Has_age_data']].copy()
+
+# ==== Define Plot Variables ==== #
+
+X = totmerge['X_gc']
+Y = totmerge['Y_gc']
+Z = totmerge['Z_gc']
+R = totmerge['R_projected']
+ID_h = totmerge2['ID']
+R_age = totmerge2['R_projected']
+FeH_x = totmerge2['FeH_x']
+Age_x = totmerge2['Age_x']
+FeH_y = totmerge2['FeH_y']
+Age_y = totmerge2['Age_y']
+Age_err = totmerge2['Age_err']
+outside = R > 10
+inside = R <= 10
+outside_age = R_age > 9.8
+inside_age = R_age <= 9.8
+theta = np.linspace(0, 2 * np.pi, 500)
+
+# ==== Plot 1: Radius vs Height ====#
+
+small = R < R_std
+middle = (R >= R_std) & (R <= 3 * R_std)
+large = R > 3 * R_std
+plt.figure(1, figsize=(8,6))
+plt.clf()
+plt.scatter(R[small], abs(Z[small]), color = 'red', alpha = 0.7, label = 'R < standard deviation of R')
+plt.scatter(R[middle],abs(Z[middle]), color='green', alpha=0.7, label='R between 1 and 3 times standard deviation')
+plt.scatter(R[large], abs(Z[large]), color='blue', alpha=0.7, label='R > 3 times standard deviation')
+plt.axvline(10, linestyle='--', color='red', label='10 kpc reference')
+plt.xlabel('Projected radius from Galactic centre (kpc)')
+plt.ylabel('Height from Galactic plane |Z| (kpc)')
+plt.title(f'Radius vs Height\nClusters outside 10 kpc: {outside.sum()}')
+plt.xlim(left=0)
+plt.ylim(bottom=0)
+
+# ==== Plot 2: X vs Y Positions ==== #
+
+plt.figure(2, figsize=(8,6))
+plt.clf()
+plt.scatter(X[outside], Y[outside], color = 'green', alpha = 0.7, label = 'R > 10 kpc')
+plt.scatter(X[inside], Y[inside], color = 'red', alpha = 0.7, label = 'R <= 10 kpc')
+plt.plot( 10 * np.cos(theta), 10 * np.sin(theta), '--', color = 'red', label = '10 kpc reference')
+plt.scatter(0,0, marker = '+', color = 'black', s = 100, label = 'Galactic centre')
+plt.scatter(-R0, 0, marker = '*', color = 'orange', s = 140, label = 'sun')
+plt.axis('equal')
+plt.xlabel('Galactic-centred x coordinate (kpc)')
+plt.ylabel('Galactic-centred y coordinate (kpc)')
+plt.title(f'Harris Cluster Positions\n Clusters outside 10 kpc: {outside.sum()}')
+
+# ==== Plot 3: Krause Age vs Metallicity ==== #
+plt.figure(3, figsize= (8,6))
+plt.clf()
+plt.scatter(FeH_x[outside_age], Age_x[outside_age], color='blue', alpha = 0.7, label = 'R > 9.8 kpc')
+plt.scatter(FeH_x[inside_age], Age_x[inside_age], color = 'red', alpha = 0.7, label = 'R <= 9.8 kpc')
+plt.axvline(-1.75, linestyle = '--', color = 'gray', label = 'Supplied screening thresholds')
+plt.axhline(12.5, linestyle = '--', color = 'gray')
+number_krause = 0
+for i in range(len(totmerge2)):
+    if R_age.iloc[i] > 9.8 and FeH_x.iloc[i] > -1.75 and pd.notna(Age_x.iloc[i]):
+        offset = (4,4)
+        if ID_h.iloc[i] in ['NGC 1904', 'NGC 6934']:
+            offset = (-40,-10)
+        plt.annotate(ID_h.iloc[i], (FeH_x.iloc[i], Age_x.iloc[i]),
+                    xytext = offset, textcoords = 'offset points', fontsize = 7)
+        number_krause += 1
+plt.xlabel('[Fe/H]')
+plt.ylabel('Age (Gyr)')
+plt.title(f'Age vs Metallicity: Krause21\n Outer clusters labelled above[Fe/H] = -1.75: {number_krause}')
+
+#  ==== Plot 4: Vandenberg Age vs Metallicity ==== #
+
+plt.figure(4, figsize=(8,6))
+plt.clf()
+plt.errorbar(FeH_y, Age_y, yerr= Age_err, fmt ='none', ecolor = 'gray', alpha = 0.5, capsize = 2, label = 'REported age uncertainty')
+plt.scatter(FeH_y[outside_age], Age_y[outside_age], color= 'blue', alpha = 0.7, label = 'R >9.8 kpc')
+plt.scatter(FeH_y[inside_age], Age_y[inside_age], color='red', alpha=0.7, label='R <= 9.8 kpc')
+number_vandenberg = 0
+for i in range(len(totmerge2)):
+    if R_age.iloc[i] > 9.8 and pd.notna(FeH_y.iloc[i]) and pd.notna(Age_y.iloc[i]):
+        offset = (4, 4)
+        if ID_h.iloc[i] in ['NGC 6101', 'NGC 6934']:
+            offset = (-40, 8)
+        if ID_h.iloc[i] in ['Arp 2', 'NGC 6715', 'NGC 1261']:
+            offset = (4, -13)
+        plt.annotate(ID_h.iloc[i], (FeH_y.iloc[i], Age_y.iloc[i]),
+                     xytext=offset, textcoords='offset points', fontsize=7)
+        number_vandenberg += 1
+plt.xlabel('[Fe/H]')
+plt.ylabel('Age (Gyr)')
+plt.title(f'Age vs Metallicity: VandenBerg\nOuter clusters with ages and metallicities: {number_vandenberg}')
+
+# ==== Plot 5: Spatial and Metallicity Screening ==== #
+selected = totmerge['Classification'] == 'Accreted'
+other_outside = (R > 9.8) & ~selected
+other_inside = (R <= 9.8) & ~selected
+plt.figure(5, figsize=(8,6))
+plt.clf()
+plt.scatter(X[selected], Y[selected], color='blue', alpha=0.7, label='Selected by supplied screening rule')
+plt.scatter(X[other_outside], Y[other_outside], color='green', alpha=0.7, label='Other clusters with R > 9.8 kpc')
+plt.scatter(X[other_inside], Y[other_inside], color='red', alpha=0.7, label='Other clusters with R <= 9.8 kpc')
+plt.plot(9.8 * np.cos(theta), 9.8 * np.sin(theta), '--', color='red', label='9.8 kpc screening boundary')
+plt.scatter(0, 0, marker='+', color='black', s=100, label='Galactic centre')
+plt.axis('equal')
+plt.xlabel('Galactic-centred X coordinate (kpc)')
+plt.ylabel('Galactic-centred Y coordinate (kpc)')
+plt.title(f'Spatial and Metallicity Screening\nSelected candidates: {selected.sum()}')
+
+# ==== Plot 6: Population Rotation ==== #
+
+normal = ~motion['Motion_outlier']
+unusual = motion['Motion_outlier']
+velocity = motion['v_GSR']
+residual = motion['v_residual']
+R_motion = motion['R_projected']
+line_x = np.linspace(-1,1,200)
+plt.figure(6, figsize= (8,6))
+plt.clf()
+plt.errorbar(q, velocity, yerr=motion['v_r_e'], fmt='none', ecolor='gray', alpha=0.4, capsize=2)
+plt.scatter(q[normal], velocity[normal], color='blue', alpha=0.7, label='Within residual threshold')
+plt.scatter(q[unusual], velocity[unusual], color='orange', edgecolors='black', label='Large velocity residual')
+plt.plot(line_x, rotation_speed * line_x, color='black', label='Fitted population rotation')
+plt.plot(line_x, rotation_speed * line_x + motion_limit, '--', color='gray', label='+/- 2 residual standard deviations')
+plt.plot(line_x, rotation_speed * line_x - motion_limit, '--', color='gray')
+for i in range(len(motion)):
+    if unusual.iloc[i]:
+        offset = (4, 4)
+        if motion['ID'].iloc[i] == 'NGC 6934':
+            offset = (4, -13)
+        plt.annotate(motion['ID'].iloc[i], (q.iloc[i], velocity.iloc[i]),
+                     xytext=offset, textcoords='offset points', fontsize=7)
+plt.xlabel('Rotation projection q = R0 sin(1) cos(b) / R')
+plt.ylabel('Galactic-rest-frame line-of-sight velocity (km/s)')
+plt.title(f'Population Rotation\nMean = {rotation_speed:.1f} +/- {rotation_error:.1f} km/s(formal error)')
+
+# ==== Plot 7: Velocity Residuals ==== #
+
+plt.figure(7, figsize=(8,6))
+plt.clf()
+plt.errorbar(R_motion, residual, yerr=motion['v_r_e'], fmt='none', ecolor='gray', alpha=0.4, capsize=2)
+plt.scatter(R_motion[normal], residual[normal], color='blue', alpha=0.7, label='Within residual threshold')
+plt.scatter(R_motion[unusual], residual[unusual], color='orange', edgecolors='black', label='Large velocity residual')
+plt.axhline(0, color='black')
+plt.axhline(motion_limit, linestyle='--', color='gray', label='+/- 2 residual standard deviations')
+plt.axhline(-motion_limit, linestyle='--', color='gray')
+for i in range(len(motion)):
+    if unusual.iloc[i]:
+        offset = (4, 4)
+        if motion['ID'].iloc[i] == 'NGC 6934':
+            offset = (4, -13)
+        plt.annotate(motion['ID'].iloc[i], (R_motion.iloc[i], residual.iloc[i]),
+                     xytext=offset, textcoords='offset points', fontsize=7)
+plt.xlabel('Projected radius from Galactic centre (kpc)')
+plt.ylabel('Velocity residual: observed - model (km/s)')
+plt.title(f'Departures from the Rotation Model\nMeasured velocities: {len(motion)}; exploratory outliers: {unusual.sum()}')
+plt.xlim(left=0)
+
+# ==== Plot *: Age vs Metallicity with Motion Flags ==== #
+
+normal_age = totmerge2['Motion_flag'] == 'Within residual threshold'
+unusual_age = totmerge2['Motion_flag'] == 'Large velocity residual'
+missing_age_motion = totmerge2['Motion_flag'] == 'Missing motion inputs'
+plt.figure(8,figsize=(8,6))
+plt.clf()
+plt.errorbar(FeH_y, Age_y, yerr=Age_err, fmt='none', ecolor='gray', alpha=0.5, capsize=2,
+             label='Reported age uncertainty')
+plt.scatter(FeH_y[normal_age], Age_y[normal_age], color='blue', alpha=0.7, label='Within residual threshold')
+plt.scatter(FeH_y[unusual_age], Age_y[unusual_age], color='orange', edgecolors='black', label='Large velocity residual')
+if missing_age_motion.any():
+    plt.scatter(FeH_y[missing_age_motion], Age_y[missing_age_motion], color='gray', label='Missing motion inputs')
+for i in range(len(totmerge2)):
+    if unusual_age.iloc[i] and pd.notna(FeH_y.iloc[i]) and pd.notna(Age_y.iloc[i]):
+        offset = (4, 4)
+        if ID_h.iloc[i] == 'NGC 3201':
+            offset = (12, -13)
+        if ID_h.iloc[i] in ['NGC 6101', 'NGC 6934']:
+            offset = (-42, 10)
+        plt.annotate(ID_h.iloc[i], (FeH_y.iloc[i], Age_y.iloc[i]),
+                     xytext=offset, textcoords='offset points', fontsize=7)
+plt.xlabel('[Fe/H]')
+plt.ylabel('Age (Gyr)')
+plt.title('Age vs Metallicity: VandenBerg\nHighlighted by the motion analysis')
+
+# ==== Check the Adopted Solar Circular Speed ==== #
+
+sensitivity = []
+for trial_V0 in [200.0, 220.0, 240.0]:
+    trial_velocity = motion['v_LSR'] + trial_V0 * np.sin(longitude) * np.cos(latitude)
+    trial_rotation = np.sum(q * trial_velocity) / np.sum(q**2)
+    trial_residual = trial_velocity - trial_rotation * q
+    trial_std = np.std(trial_residual, ddof=1)
+    trial_outliers = abs(trial_residual) > 2 * trial_std
+    sensitivity.append([trial_V0, trial_rotation, trial_std, int(trial_outliers.sum())])
+motion_sensitivity = pd.DataFrame(sensitivity, columns=[
+    'Adopted_V0_km_s', 'Fitted_rotation_km_s', 'Residual_std_km_s', 'Number_motion_outliers'])
+
+
+# ==== Save Results and Print the Summary ==== #
+
+classification = totmerge[['ID', 'R_projected', 'R_gc', 'Age_x', 'FeH_x', 'Age_y', 'FeH_y',
+                           'Classification', 'Has_age_data', 'v_GSR', 'v_model', 'v_residual', 'Motion_flag']].copy()
+motion_results = motion[['ID', 'L', 'B', 'R_projected', 'v_r', 'v_r_e', 'v_LSR', 'Rotation_projection',
+                         'v_GSR', 'v_model', 'v_residual', 'Motion_outlier', 'Motion_flag',
+                         'Age_x', 'FeH_x', 'Age_y', 'FeH_y', 'Classification']].copy()
+motion_outliers = motion_results[unusual].sort_values('v_residual')
+summary_values = [len(totmerge), len(totmerge2), len(motion), R0, V0, rotation_speed,
+                  rotation_error, residual_std, 2.0, motion_limit, int(unusual.sum()),
+                  int((abs(residual) > 3 * residual_std).sum())]
+motion_summary = pd.DataFrame([summary_values], columns=[
+    'Number_clusters', 'Number_with_ages', 'Number_with_velocities', 'R0_kpc', 'Adopted_V0_km_s',
+    'Fitted_rotation_km_s', 'Formal_rotation_error_km_s', 'Residual_std_km_s', 'Outlier_sigma_limit',
+    'Residual_threshold_km_s', 'Number_motion_outliers', 'Number_beyond_3sigma'])
+totmerge.to_csv('totmerge.csv', index=False)
+totmerge2.to_csv('totmerge2.csv', index=False)
+classification.to_csv('classification.csv', index=False)
+motion_results.to_csv('motion_analysis.csv', index=False)
+motion_outliers.to_csv('motion_outliers.csv', index=False)
+motion_summary.to_csv('motion_summary.csv', index=False)
+motion_sensitivity.to_csv('motion_sensitivity.csv', index=False)
+
+print(f'Clusters: {len(totmerge)}; with ages: {len(totmerge2)}; with velocities: {len(motion)}')
+print('\nCandidate classifications:')
+print(totmerge['Classification'].value_counts())
+print(f'\nMean rotation: {rotation_speed:.1f} +/- {rotation_error:.1f} km/s (formal error)')
+print(f'Residual standard deviation: {residual_std:.1f} km/s')
+print(f'Exploratory outliers at 2 standard deviations: {unusual.sum()}')
+print(f'Outliers at 3 standard deviations: {(abs(residual) > 3 * residual_std).sum()}')
+print(motion_outliers[['ID', 'v_GSR', 'v_residual', 'Classification']].round(2).to_string(index=False))
+print('\nSolar circular speed sensitivity:')
+print(motion_sensitivity.round(2).to_string(index=False))
+print('\nMotion flags do not by themselves establish accretion or a retrograde orbit.')
+
+
+# ==== Format, Save and Show All Eight Plots ==== #
+
+for number in plt.get_fignums():
+    plt.figure(number)
+    plt.legend(fontsize=8)
+    plt.grid(True, alpha=0.6)
+    plt.tight_layout()
+    plt.savefig(f'plot_{number}.png', dpi=200, bbox_inches='tight')
+plt.show()
